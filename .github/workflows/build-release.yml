@@ -20,11 +20,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python 2.7
-        uses: actions/setup-python@v5
-        with:
-          python-version: "2.7"
-
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -40,6 +35,11 @@ jobs:
             libdw-dev \
             libelf-dev \
             libssl-dev \
+            libffi-dev \
+            libbz2-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            liblzma-dev \
             libncurses5-dev \
             locales \
             jq \
@@ -53,15 +53,21 @@ jobs:
             swig \
             unzip \
             wget \
+            zlib1g-dev \
             zstd
 
-      - name: Ensure python2 aliases exist
+      - name: Install Python 2.7.18 (pyenv)
         run: |
           set -euo pipefail
-          PY27_BIN="$(command -v python)"
+          curl -fsSL https://pyenv.run | bash
+          export PYENV_ROOT="$HOME/.pyenv"
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init -)"
+          pyenv install -s 2.7.18
+          pyenv global 2.7.18
+          PY27_BIN="$(pyenv which python)"
           sudo ln -sf "${PY27_BIN}" /usr/local/bin/python2
           sudo ln -sf "${PY27_BIN}" /usr/local/bin/python2.7
-          python --version
           python2 --version
           python2.7 --version
 
