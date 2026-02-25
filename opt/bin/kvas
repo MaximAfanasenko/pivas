@@ -134,6 +134,17 @@ case "${1}" in
 		esac
 		;;
 
+	ovpn)
+		case "${2}" in
+			on)             cmd_ovpn_split_on "${3}" ;;
+			off)            cmd_ovpn_split_off ;;
+			add)            cmd_ovpn_list_add "${3}" ;;
+			del | rm)       cmd_ovpn_list_del "${3}" ;;
+			list | show)    cmd_ovpn_list_show ;;
+			status | *)     cmd_ovpn_split_status ;;
+		esac
+		;;
+
 	# DNS
 
 	dns)

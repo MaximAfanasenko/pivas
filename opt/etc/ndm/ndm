@@ -22,6 +22,9 @@
 ROUTE_TABLE_ID=1001
 RULE_PRIORITY=1778
 MARK_NUM=0xd1000
+ROUTE_TABLE_ID_OVPN=1002
+RULE_PRIORITY_OVPN=1777
+MARK_NUM_OVPN=0xd1001
 DNS_PORT=9753
 
 IPSET_DESTINATION_EXCLUDED=KVAS_DESTINATION_EXCLUDED
@@ -31,6 +34,8 @@ TABLE_DNS=nat
 
 CHAIN_MARK=KVAS_MARK
 TABLE_MARK=mangle
+CHAIN_MARK_OVPN=KVAS_OVPN_MARK
+TABLE_MARK_OVPN=mangle
 
 CHAIN_DNAT_TO_PORT=KVAS_DNAT_TO_PORT
 TABLE_DNAT_TO_PORT=nat
@@ -87,9 +92,17 @@ version_os() {
 inface_cli()(get_config_value "INFACE_CLI")
 inface_ent()(get_config_value "INFACE_ENT")
 inface_gw4()(get_gw4 "$(inface_ent)")
+inface_ovpn_cli()(get_config_value "OVPN_INFACE_CLI")
+inface_ovpn_ent()(get_config_value "OVPN_INFACE_ENT")
 
 inface_guest_gw4()(get_gw4 "${1}")
 guest_net()(echo "$(inface_guest_gw4 "${1}" | cut -d'.' -f1-3).0/24")
+
+is_ovpn_split_active() {
+	is_shadowsocks_enabled || return 1
+	is_ovpn_split_enabled || return 1
+	is_interface_online "$(inface_ovpn_cli)"
+}
 
 
 # ------------------------------------------------------------------------------------------
@@ -269,6 +282,7 @@ ip4__ipset__create() {
 # Для списка условной маршрутизации
 ip4__ipset__create_list() {
 	ip4__ipset__create "${IPSET_TABLE_NAME}" "$(get_config_value LIST_IPSET_TTL)"
+	ip4__ipset__create "${IPSET_TABLE_NAME_OVPN}" "$(get_config_value LIST_IPSET_TTL)"
 }
 
 #ToDo: сменить в других файлах обращение на новую обёртку
@@ -332,6 +346,7 @@ ip4__ipset__destroy() {
 # Для списка условной маршрутизации
 ip4__ipset__destroy_list() {
 	ip4__ipset__destroy "${IPSET_TABLE_NAME}"
+	ip4__ipset__destroy "${IPSET_TABLE_NAME_OVPN}"
 }
 
 # Для постоянного списка исключаемых сетей
@@ -516,6 +531,13 @@ ip4__shadowsocks__create_chain() {
 	#local_port=$(get_from_json "${VLESS_CONFIG_FILE}" 'port' 'inbounds')
 
 	ip4__dnat_to_port__create_chain "${TABLE_DNAT_TO_PORT}" "${CHAIN_DNAT_TO_PORT}" "${local_port}"
+
+	if is_ovpn_split_active ; then
+		/opt/sbin/iptables -C "${CHAIN_DNAT_TO_PORT}" -w -t "${TABLE_DNAT_TO_PORT}" \
+			-m set --match-set "${IPSET_TABLE_NAME_OVPN}" dst -j RETURN &>/dev/null \
+		 || /opt/sbin/iptables -I "${CHAIN_DNAT_TO_PORT}" 1 -w -t "${TABLE_DNAT_TO_PORT}" \
+			-m set --match-set "${IPSET_TABLE_NAME_OVPN}" dst -j RETURN
+	fi
 }
 
 ip4__mark__create_chain() {
@@ -560,6 +582,25 @@ ip4__mark__create_chain() {
 		/opt/sbin/iptables -w -t "${TABLE_MARK}" -A "${CHAIN_MARK}" -j MARK --set-mark ${MARK_NUM}
 		/opt/sbin/iptables -w -t "${TABLE_MARK}" -A "${CHAIN_MARK}" -j CONNMARK --save-mark
 	} &>/dev/null || error "[${FUNCNAME}] Возникли ошибки во время маркировки трафика для VPN"
+}
+
+ip4__ovpn__mark__create_chain() {
+	{
+		if ip4__chain__is_exist "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}" ; then
+			return
+		fi
+
+		ip4__chain__create_for_data "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}"
+
+		ip4__ovpn__route__add_table
+		ip4__ovpn__rule__add_mark_to_table
+
+		/opt/sbin/iptables -w -t "${TABLE_MARK_OVPN}" -A "${CHAIN_MARK_OVPN}" -j CONNMARK --restore-mark
+		/opt/sbin/iptables -w -t "${TABLE_MARK_OVPN}" -A "${CHAIN_MARK_OVPN}" -m mark --mark ${MARK_NUM_OVPN} -j RETURN
+		/opt/sbin/iptables -w -t "${TABLE_MARK_OVPN}" -A "${CHAIN_MARK_OVPN}" -m conntrack ! --ctstate NEW -j RETURN
+		/opt/sbin/iptables -w -t "${TABLE_MARK_OVPN}" -A "${CHAIN_MARK_OVPN}" -j MARK --set-mark ${MARK_NUM_OVPN}
+		/opt/sbin/iptables -w -t "${TABLE_MARK_OVPN}" -A "${CHAIN_MARK_OVPN}" -j CONNMARK --save-mark
+	} &>/dev/null || error "[${FUNCNAME}] Возникли ошибки во время маркировки трафика для OVPN"
 }
 
 
@@ -608,6 +649,34 @@ ip4__add_routing_for_home() {
 	/opt/sbin/iptables -A PREROUTING -w -t "${table}" -i "${net_interface}" -m set --match-set "${IPSET_TABLE_NAME}" dst -j "${chain_name}"
 }
 
+ip4__add_routing_by_ipset_for_home() {
+	if [ -z "${1}" ] ; then
+		error "[${FUNCNAME}] Не задан обязательный аргумент — таблица"
+		return
+	fi
+	local table="${1}"
+
+	if [ -z "${2}" ] ; then
+		error "[${FUNCNAME}] Не задан обязательный аргумент — цепочка"
+		return
+	fi
+	local chain_name="${2}"
+
+	if [ -z "${3}" ] ; then
+		error "[${FUNCNAME}] Не задан обязательный аргумент — ipset"
+		return
+	fi
+	local ipset_name="${3}"
+
+	local net_interface=$(get_local_inface)
+
+	if save_iptables | grep -F 'PREROUTING' | grep -F "${net_interface}" | grep -F "${ipset_name}" | grep -Fq "${chain_name}" ; then
+		return
+	fi
+
+	/opt/sbin/iptables -A PREROUTING -w -t "${table}" -i "${net_interface}" -m set --match-set "${ipset_name}" dst -j "${chain_name}"
+}
+
 ip4__shadowsocks__add_routing_for_home() {
 	ip4__add_routing_for_home "${TABLE_DNAT_TO_PORT}" "${CHAIN_DNAT_TO_PORT}" 'ShadowSocks'
 }
@@ -615,6 +684,10 @@ ip4__shadowsocks__add_routing_for_home() {
 # VPN, VLESS
 ip4__mark__add_routing_for_home() {
 	ip4__add_routing_for_home "${TABLE_MARK}" "${CHAIN_MARK}" 'сетевого интерфейса'
+}
+
+ip4__ovpn__mark__add_routing_for_home() {
+	ip4__add_routing_by_ipset_for_home "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}" "${IPSET_TABLE_NAME_OVPN}"
 }
 
 
@@ -888,6 +961,15 @@ ip4__add_routing_by_list_for_net_from_config() {
 	done
 }
 
+ip4__ovpn__add_routing_by_list_for_net_from_config() {
+	IFS=' '
+	for net_interface in $(get_guest_inface_list_from_config) ; do
+		local iptables_filter
+		iptables_filter=$(iptables__get_subrule_for_net "${net_interface}")
+		ip4__add_routing "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}" "${iptables_filter}" "${IPSET_TABLE_NAME_OVPN}"
+	done
+}
+
 # Расширенный роутинг для перехватов цепочками. Для команд:
 # route by_list ip add — роутинг по списку для IP
 # route full ip add — роутинг всего трафика для IP
@@ -944,6 +1026,15 @@ ip4_mark_vpn_network() {
 	} &>/dev/null
 }
 
+ip4_mark_ovpn_network() {
+	{
+		is_ovpn_split_active || return
+		ip4__ovpn__mark__create_chain
+		ip4__ovpn__mark__add_routing_for_home
+		ip4__ovpn__add_routing_by_list_for_net_from_config
+	} &>/dev/null
+}
+
 ip4_firewall_set_all_rules() {
 	if is_shadowsocks_enabled ; then
 		ip4__shadowsocks__create_chain &>/dev/null
@@ -954,6 +1045,7 @@ ip4_firewall_set_all_rules() {
 
 		#ToDo: сделать home отключаемой
 		ip4__shadowsocks__add_routing_for_home &> /dev/null
+		ip4_mark_ovpn_network
 	else
 		ip4_mark_vpn_network
 	fi
@@ -971,6 +1063,16 @@ ip4__delete_routing_by_list_for_net_from_config() {
 	IFS=' '
 	for net_interface in $(get_guest_inface_list_from_config) ; do
 		ip4__delete_routing_by_list_for_net "${net_interface}"
+	done
+}
+
+ip4__ovpn__delete_routing_by_list_for_net_from_config() {
+	IFS=' '
+	for net_interface in $(get_guest_inface_list_from_config) ; do
+		local iptables_filter
+		iptables_filter=$(iptables__get_subrule_for_net "${net_interface}")
+		ip4__dns__delete_routing "${iptables_filter}"
+		ip4__delete_routing "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}" "${iptables_filter}" "${IPSET_TABLE_NAME_OVPN}"
 	done
 }
 
@@ -1041,9 +1143,14 @@ ip4_firewall_flush_dnat_to_port() {
 	{
 		ip4__delete_routing_by_list_for_net_from_config
 		ip4__delete_routing_for_ip_from_config
+		ip4__ovpn__delete_routing_by_list_for_net_from_config
+		ip4__delete_routing "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}" "-i $(get_local_inface)" "${IPSET_TABLE_NAME_OVPN}"
 
 		# достаточно удалять правила для br0, но на всякий случай
 		ip4__chain__delete_jump "${TABLE_DNAT_TO_PORT}" "${CHAIN_DNAT_TO_PORT}"
+		ip4__chain__delete_jump "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}"
+		ip4__ovpn__rule__delete_mark_to_table
+		ip4__ovpn__route__flush_table
 		# в бета 9 перехваты DNS не очищались, да и они универсальны меж подключениями
 		#ip4__chain__delete_jump "${TABLE_DNS}" "${CHAIN_DNS}"
 
@@ -1095,6 +1202,10 @@ ip4__flush() {
 		ip4__chain__delete      "${TABLE_DNAT_TO_PORT}" "${CHAIN_DNAT_TO_PORT}"
 		ip4__chain__delete_jump "${TABLE_MARK}" "${CHAIN_MARK}"
 		ip4__chain__delete      "${TABLE_MARK}" "${CHAIN_MARK}"
+		ip4__chain__delete_jump "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}"
+		ip4__chain__delete      "${TABLE_MARK_OVPN}" "${CHAIN_MARK_OVPN}"
+		ip4__ovpn__rule__delete_mark_to_table
+		ip4__ovpn__route__flush_table
 
 		# если привязана к какой-то исторической цепочке, может упасть
 		ip4__ipset__destroy_destination_excluded
@@ -1105,6 +1216,9 @@ ip4__flush() {
 		# но тогда нужно переписать код в смене интерфейса
 		ip4__chain__delete_jump "${TABLE_DNAT_TO_PORT}" "${CHAIN_DNAT_TO_PORT}"
 		ip4__chain__delete_jump "${TABLE_MARK}"         "${CHAIN_MARK}"
+		ip4__chain__delete_jump "${TABLE_MARK_OVPN}"    "${CHAIN_MARK_OVPN}"
+		ip4__ovpn__rule__delete_mark_to_table
+		ip4__ovpn__route__flush_table
 	fi
 
 	if echo "${parts}" | grep -Fq ' ipset ' ; then
@@ -1273,6 +1387,81 @@ ip4__rule__delete_mark_to_table() {
 	 || {
 		error "[${FUNCNAME}] Ошибка при удалении ${submessage}"
 	}
+}
+
+ip4__ovpn__route__show_table() {
+	/opt/sbin/ip route show table "${ROUTE_TABLE_ID_OVPN}"
+}
+
+ip4__ovpn__route__is_exist_table() {
+	[ $(ip4__ovpn__route__show_table | head -c1 | wc -c) -gt 0 ]
+}
+
+ip4__ovpn__route__add_table() {
+	local net_interface
+	net_interface=$(get_config_value 'OVPN_INFACE_ENT')
+	[ -n "${net_interface}" ] || return
+
+	local gateway_ip
+	gateway_ip=$(get_config_value 'OVPN_ADDR_MAN')
+	if [ -n "${gateway_ip}" ] ; then
+		local subroute="default via ${gateway_ip} dev ${net_interface}"
+	else
+		local subroute="default dev ${net_interface}"
+	fi
+
+	local route_show
+	route_show=$(ip4__ovpn__route__show_table)
+	if [ -n "${route_show}" ] && ! echo "${route_show}" | grep -Fq "${subroute}" ; then
+		/opt/sbin/ip route flush table "${ROUTE_TABLE_ID_OVPN}" &>/dev/null
+		route_show=''
+	fi
+
+	if [ -z "${route_show}" ] ; then
+		/opt/sbin/ip route add table "${ROUTE_TABLE_ID_OVPN}" $(echo "${subroute}") &>/dev/null \
+		 || error "[${FUNCNAME}] Ошибка при добавлении таблицы маршрутизации ${ROUTE_TABLE_ID_OVPN}"
+	fi
+
+	if [ -z "${gateway_ip}" ] ; then
+		gateway_ip=$(get_ip_by_inface "${net_interface}")
+		if [ -n "${gateway_ip}" ] ; then
+			local gateway_net
+			gateway_net=$(get_net_by_ip "${gateway_ip}")
+			local route_local="${gateway_net} via ${gateway_ip}"
+			echo "$(ip4__ovpn__route__show_table)" | grep -Fq "${route_local}" \
+			 || /opt/sbin/ip route add $(echo "${route_local}") table "${ROUTE_TABLE_ID_OVPN}" &>/dev/null || true
+		fi
+	fi
+
+	ip4__route__flush_cache
+}
+
+ip4__ovpn__route__flush_table() {
+	if ! ip4__ovpn__route__is_exist_table ; then
+		return
+	fi
+
+	/opt/sbin/ip route flush table "${ROUTE_TABLE_ID_OVPN}" &>/dev/null || true
+	ip4__route__flush_cache
+}
+
+ip4__ovpn__rule__get_sub() {
+	echo "fwmark ${MARK_NUM_OVPN}/${MARK_NUM_OVPN} lookup ${ROUTE_TABLE_ID_OVPN}"
+}
+
+ip4__ovpn__rule__add_mark_to_table() {
+	local subrule
+	subrule="$(ip4__ovpn__rule__get_sub)"
+	/opt/sbin/ip rule show | grep -Fq "${subrule}" && return
+	/opt/sbin/ip rule add $(echo "${subrule}") priority "${RULE_PRIORITY_OVPN}" &>/dev/null \
+	 || error "[${FUNCNAME}] Ошибка при добавлении правила маршрутизации OVPN"
+}
+
+ip4__ovpn__rule__delete_mark_to_table() {
+	local subrule
+	subrule="$(ip4__ovpn__rule__get_sub)"
+	/opt/sbin/ip rule show | grep -Fq "${subrule}" || return
+	/opt/sbin/ip rule del $(echo "${subrule}") priority "${RULE_PRIORITY_OVPN}" &>/dev/null || true
 }
 
 #ToDo: сменить в других файлах обращение на новую обёртку

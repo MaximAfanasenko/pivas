@@ -270,6 +270,7 @@ stop_crypt(){
 # восставившем архивные копии файлов конфигурации
 restore_backups(){
 	restore_backup "${KVAS_LIST_FILE_BACKUP}" "${KVAS_LIST_FILE}" "защищенного списка"
+	restore_backup "${KVAS_OVPN_LIST_FILE_BACKUP}" "${KVAS_OVPN_LIST_FILE}" "OVPN защищенного списка"
 	restore_backup "${KVAS_CONFIG_BACKUP}" "${KVAS_CONF_FILE}" "конфигурации пакета Квас"
 
 	restore_backup "${ADGUARDHOME_CONFIG_BACKUP}" "${ADGUARDHOME_CONFIG}" "конфигурации AdGuardHome"
@@ -295,6 +296,7 @@ restore_backups(){
 save_backups(){
 	backup_copy "${KVAS_CONF_FILE}" "${KVAS_CONFIG_BACKUP}"
 	backup_copy "${KVAS_LIST_FILE}" "${KVAS_LIST_FILE_BACKUP}"
+	backup_copy "${KVAS_OVPN_LIST_FILE}" "${KVAS_OVPN_LIST_FILE_BACKUP}"
 
 	backup_copy "${ADGUARDHOME_CONFIG}" "${ADGUARDHOME_CONFIG_BACKUP}"
 	backup_copy "${ADGUARD_IPSET_FILE}" "${ADGUARD_IPSET_FILE_BACKUP}"
@@ -375,6 +377,7 @@ rm_package_files() {
 			rm_file /opt/etc/inface_equals
 			rm_file /opt/etc/kvas.conf
 			rm_file /opt/etc/kvas.list
+			rm_file /opt/etc/kvas.ovpn.list
 
 			rm_dir /opt/etc/.kvas
 
@@ -397,6 +400,7 @@ rm_package_files() {
 		rm_file /opt/etc/cron.5mins/check_vpn
 
 		rm_file /opt/etc/dnsmasq.d/kvas.dnsmasq
+		rm_file /opt/etc/dnsmasq.d/kvas.ovpn.dnsmasq
 		rm_dir /opt/etc/adblock
 		rm_dir /opt/tmp/adblock
 
@@ -435,6 +439,7 @@ rm_previous_version_files() {
 
 	# текущие, создадутся позже
 	rm_file /opt/etc/dnsmasq.d/kvas.dnsmasq
+	rm_file /opt/etc/dnsmasq.d/kvas.ovpn.dnsmasq
 	rm_dir /opt/etc/adblock
 	rm_dir /opt/tmp/adblock
 	# исторические
@@ -880,4 +885,3 @@ cmd_uninstall() {
 		echo "Удаление КВАСа завершено."
 	fi
 }
-

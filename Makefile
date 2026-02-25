@@ -67,9 +67,10 @@ chmod -R +x /opt/apps/kvas/etc/ndm/*
 
 ln -sf /opt/apps/kvas/bin/kvas /opt/bin/kvas
 
-cp -f /opt/apps/kvas/etc/conf/kvas.conf /opt/etc/kvas.conf
-[ -f /opt/etc/kvas.list ] || cp -f /opt/apps/kvas/etc/conf/kvas.list /opt/etc/kvas.list
-mkdir -p /opt/etc/adblock /opt/etc/dnsmasq.d
+	cp -f /opt/apps/kvas/etc/conf/kvas.conf /opt/etc/kvas.conf
+	[ -f /opt/etc/kvas.list ] || cp -f /opt/apps/kvas/etc/conf/kvas.list /opt/etc/kvas.list
+	[ -f /opt/etc/kvas.ovpn.list ] || cp -f /opt/apps/kvas/etc/conf/kvas.ovpn.list /opt/etc/kvas.ovpn.list
+	mkdir -p /opt/etc/adblock /opt/etc/dnsmasq.d
 cp -f /opt/apps/kvas/etc/conf/adblock.sources /opt/etc/adblock/sources.list
 cp -f /opt/apps/kvas/etc/ndm/ndm /opt/apps/kvas/bin/libs/ndm
 

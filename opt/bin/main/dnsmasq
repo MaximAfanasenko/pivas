@@ -23,27 +23,41 @@
 logger -t 'КВАС' 'Обновление доменной конфигурации DNSMasq'
 
 IPSET_TABLE_NAME=KVAS_LIST
+IPSET_TABLE_NAME_OVPN=KVAS_OVPN_LIST
 ipset_file=/opt/etc/dnsmasq.d/kvas.dnsmasq
+ipset_file_ovpn=/opt/etc/dnsmasq.d/kvas.ovpn.dnsmasq
 host_list=/opt/etc/kvas.list
+host_list_ovpn=/opt/etc/kvas.ovpn.list
 LOCALHOST_IP=127.0.0.1
 
-# обнуляем защищенный список  БС
+# обнуляем защищенные списки
 > "${ipset_file}"
+> "${ipset_file_ovpn}"
 
-while read -r line || [ -n "${line}" ]; do
-  # удаляем из строки комментарии - все что встречается после символа # и сам символ
-  line=$(echo "${line}" | sed 's/#.*$//g' | tr -s ' ' )
-  #  пропускаем пустые строки и строки с комментариями
-  [ -z "${line}" ] && continue
-  #  пропускаем строки с комментариями
-  [ "${line::1}" = "#" ] && continue
+fill_dnsmasq_list() {
+	local source_list="${1}"
+	local target_file="${2}"
+	local ipset_name="${3}"
+	[ -f "${source_list}" ] || return 0
 
-  # пропускаем из обработки IP адреса
-  echo "${line}" | grep -Eq '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' && continue
-  host=$(echo "${line}" | sed 's/\*//g;')
-  echo "ipset=/${host}/${IPSET_TABLE_NAME}" >> "${ipset_file}"
+	while read -r line || [ -n "${line}" ]; do
+		# удаляем из строки комментарии - все что встречается после символа # и сам символ
+		line=$(echo "${line}" | sed 's/#.*$//g' | tr -s ' ')
+		#  пропускаем пустые строки и строки с комментариями
+		[ -z "${line}" ] && continue
+		#  пропускаем строки с комментариями
+		[ "${line::1}" = "#" ] && continue
 
-done < "${host_list}"
+		# пропускаем из обработки IP адреса
+		echo "${line}" | grep -Eq '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' && continue
+		host=$(echo "${line}" | sed 's/\*//g;')
+		echo "ipset=/${host}/${ipset_name}" >> "${target_file}"
+	done < "${source_list}"
+}
+
+fill_dnsmasq_list "${host_list}" "${ipset_file}" "${IPSET_TABLE_NAME}"
+fill_dnsmasq_list "${host_list_ovpn}" "${ipset_file_ovpn}" "${IPSET_TABLE_NAME_OVPN}"
+
 
 num_recs_hosts_list=$(cat < "${host_list}" | grep -Evc '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' )
 

@@ -42,4 +42,17 @@ if [ "${1}" = "hook" ] && [ "${change}" = "link" ] ; then
 			;;
 		esac
 	fi
+
+	if is_ovpn_split_enabled && [ "${id}" = "$(inface_ovpn_cli)" ]; then
+		case "${connected}-${link}-${up}" in
+			"no-down-down" )
+				{ ip4__flush 'chain table'; ip4_firewall_set_all_rules; } &> /dev/null
+				logger -t "КВАС"  "OVPN split интерфейс ${id} отключен. Трафик возвращен в основной тоннель."
+			;;
+			"yes-up-up" )
+				{ ip4__flush 'chain table'; ip4_firewall_set_all_rules; } &> /dev/null
+				logger -t "КВАС"  "OVPN split интерфейс ${id} подключен. Маршрутизация OVPN восстановлена."
+			;;
+		esac
+	fi
 fi
