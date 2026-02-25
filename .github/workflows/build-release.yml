@@ -1,0 +1,124 @@
+name: Build And Release IPK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            ccache \
+            curl \
+            gawk \
+            g++-multilib \
+            gcc-multilib \
+            genisoimage \
+            git \
+            libdw-dev \
+            libelf-dev \
+            libssl-dev \
+            libncurses5-dev \
+            locales \
+            jq \
+            pv \
+            python3 \
+            python3-pip \
+            qemu-utils \
+            rsync \
+            signify-openbsd \
+            subversion \
+            swig \
+            unzip \
+            wget \
+            zstd
+
+      - name: Prepare Build Variables
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG_NAME="$(sed -n 's/^PKG_NAME:=//p' Makefile | tr -d '[:space:]')"
+          PKG_VERSION="$(sed -n 's/^PKG_VERSION:=//p' Makefile | tr -d '[:space:]')"
+          PKG_RELEASE="$(sed -n 's/^PKG_RELEASE:=//p' Makefile | tr -d '[:space:]')"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG_NAME="${PKG_NAME}-${PKG_VERSION}-${PKG_RELEASE}-${SHORT_SHA}"
+          RELEASE_NAME="${PKG_NAME} ${PKG_VERSION}-${PKG_RELEASE} (${SHORT_SHA})"
+
+          echo "pkg_name=${PKG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "pkg_version=${PKG_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "pkg_release=${PKG_RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Clone Entware Sources
+        run: |
+          git clone --depth 1 https://github.com/Entware/Entware.git /tmp/entware
+
+      - name: Add Package To Entware Feeds
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/entware/feeds/packages/kvas
+          rsync -a --delete --exclude '.git' "${GITHUB_WORKSPACE}/" /tmp/entware/feeds/packages/kvas/
+          cd /tmp/entware
+          grep -q '^src-link kvas feeds/packages/kvas$' .feeds || echo "src-link kvas feeds/packages/kvas" >> .feeds
+
+      - name: Configure Entware Build
+        run: |
+          set -euo pipefail
+          cd /tmp/entware
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          CONFIG_FILE="$(ls configs/aarch64-*.config | head -n 1)"
+          cp -f "${CONFIG_FILE}" .config
+          grep -q '^CONFIG_PACKAGE_kvas=m$' .config || echo 'CONFIG_PACKAGE_kvas=m' >> .config
+          make defconfig
+
+      - name: Build Toolchain
+        run: |
+          cd /tmp/entware
+          make -j"$(nproc)" toolchain/install
+
+      - name: Build kvas Package
+        run: |
+          set -euo pipefail
+          cd /tmp/entware
+          make -j"$(nproc)" package/kvas/compile
+
+      - name: Collect IPK Artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/artifacts
+          find /tmp/entware/bin -type f -name "kvas*.ipk" -print -exec cp -f {} /tmp/artifacts/ \;
+          ls -la /tmp/artifacts
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kvas-ipk
+          path: /tmp/artifacts/*.ipk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag_name }}
+          name: ${{ steps.vars.outputs.release_name }}
+          files: /tmp/artifacts/*.ipk
+          generate_release_notes: true
+          prerelease: true
