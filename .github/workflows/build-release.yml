@@ -15,7 +15,6 @@ jobs:
     timeout-minutes: 240
     env:
       FORCE: "1"
-      CCACHE_DIR: /tmp/entware/.ccache
 
     steps:
       - name: Checkout Repository
@@ -107,7 +106,6 @@ jobs:
         with:
           path: |
             /tmp/entware/dl
-            /tmp/entware/.ccache
             /tmp/entware/staging_dir/toolchain-*
             /tmp/entware/build_dir/toolchain-*
           key: ${{ runner.os }}-entware-aarch64-${{ steps.entware.outputs.commit }}-v1
@@ -131,7 +129,6 @@ jobs:
           CONFIG_FILE="$(ls configs/aarch64-*.config | head -n 1)"
           cp -f "${CONFIG_FILE}" .config
           grep -q '^CONFIG_PACKAGE_kvas=m$' .config || echo 'CONFIG_PACKAGE_kvas=m' >> .config
-          grep -q '^CONFIG_CCACHE=y$' .config || echo 'CONFIG_CCACHE=y' >> .config
           make defconfig
 
       - name: Build Toolchain
@@ -145,7 +142,6 @@ jobs:
         with:
           path: |
             /tmp/entware/dl
-            /tmp/entware/.ccache
             /tmp/entware/staging_dir/toolchain-*
             /tmp/entware/build_dir/toolchain-*
           key: ${{ runner.os }}-entware-aarch64-${{ steps.entware.outputs.commit }}-v1
@@ -155,8 +151,17 @@ jobs:
           set -euo pipefail
           cd /tmp/entware
           if ! make -j"$(nproc)" package/kvas/compile; then
-            echo "Parallel build failed, rerunning with verbose logs..."
-            make -j1 V=sc package/kvas/compile
+            echo "Parallel build failed, rerunning with detailed logs..."
+            set +e
+            make -j1 V=s package/kvas/compile
+            rc=$?
+            set -e
+            echo "=== Last 250 lines from Entware logs matching kvas ==="
+            find /tmp/entware/logs -type f -name "*kvas*" -print | while read -r f; do
+              echo "--- $f ---"
+              tail -n 250 "$f" || true
+            done
+            exit $rc
           fi
 
       - name: Collect IPK Artifacts
