@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -eu
+
+REPO_OWNER="MaximAfanasenko"
+REPO_NAME="pivas"
+BRANCH="main"
+UPGRADE_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/opt/bin/main/upgrade"
+UPGRADE_FILE="/tmp/kvas-upgrade"
+
+if ! command -v curl >/dev/null 2>&1; then
+	echo "curl не найден. Выполните: opkg install curl"
+	exit 1
+fi
+
+echo "Скачиваем установщик из форка ${REPO_OWNER}/${REPO_NAME}..."
+curl -fsSL "${UPGRADE_URL}" -o "${UPGRADE_FILE}"
+chmod +x "${UPGRADE_FILE}"
+
+echo "Запускаем установку..."
+sh "${UPGRADE_FILE}" "${@}"

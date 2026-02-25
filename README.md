@@ -32,7 +32,7 @@
 7. **Квас** позволяет оперировать со списком исключений при блокировке рекламы, добавляет и удаляет домены в этом списке.
 
 ## Установка пакета 
-1. Зайдите в **entware** своего роутера и введите команду `opkg install curl && curl -sOfL http://kvas.zeleza.ru/install && sh install`. 
+1. Зайдите в **entware** своего роутера и введите команду `opkg install curl && curl -fsSL https://raw.githubusercontent.com/MaximAfanasenko/pivas/main/install -o install && sh install`. 
 2. Далее, следуйте инструкциям на экране.
 3. Подробности читайте [здесь](https://github.com/qzeleza/kvas/wiki/Установка-пакета)
 
@@ -53,4 +53,3 @@
 [![Star History Chart](https://api.star-history.com/svg?repos=qzeleza/kvas&type=Timeline)](https://star-history.com/#qzeleza/kvas&Timeline)
 
 --- 
-

@@ -183,7 +183,7 @@ remove_nano(){
 #--------------------------------------------------------------------------------------------------------------
 
 # Ссылка на репозиторий на GitHub для получения крайней версии пакета
-release_url=https://api.github.com/repos/qzeleza/kvas/releases
+release_url=https://api.github.com/repos/MaximAfanasenko/pivas/releases
 # Получаем ссылку на крайний релиз пакета на GitHub
 package_url=$(curl -sH "Accept: application/vnd.github.v3+json" ${release_url}/latest | sed -n 's/.*browser_download_url\": "\(.*\)\"/\1/p;'| tr -d ' ' |  sed '/^$/d')
 # Выделяем имя пакета из ссылки
@@ -369,4 +369,3 @@ else
 fi
 
 rm -f upgrade install
-
