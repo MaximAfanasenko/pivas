@@ -118,8 +118,8 @@ jobs:
       - name: Add Package To Entware Feeds
         run: |
           set -euo pipefail
-          mkdir -p /tmp/entware/feeds/packages/kvas
-          rsync -a --delete --exclude '.git' "${GITHUB_WORKSPACE}/" /tmp/entware/feeds/packages/kvas/
+          mkdir -p /tmp/entware/feeds/packages/kvas/kvas
+          rsync -a --delete --exclude '.git' "${GITHUB_WORKSPACE}/" /tmp/entware/feeds/packages/kvas/kvas/
           cd /tmp/entware
           grep -q '^src-link kvas feeds/packages/kvas$' .feeds || echo "src-link kvas feeds/packages/kvas" >> .feeds
 
@@ -155,9 +155,9 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/entware
-          if ! make -j"$(nproc)" package/kvas/compile; then
+          if ! make -j"$(nproc)" package/feeds/kvas/kvas/compile; then
             echo "Parallel build failed, rerunning with verbose logs..."
-            make -j1 V=sc package/kvas/compile
+            make -j1 V=sc package/feeds/kvas/kvas/compile
           fi
 
       - name: Collect IPK Artifacts
