@@ -87,18 +87,18 @@ jobs:
           CONFIG_FILE="$(ls configs/aarch64-*.config | head -n 1)"
           cp -f "${CONFIG_FILE}" .config
           grep -q '^CONFIG_PACKAGE_kvas=m$' .config || echo 'CONFIG_PACKAGE_kvas=m' >> .config
-          make defconfig
+          make defconfig FORCE=1
 
       - name: Build Toolchain
         run: |
           cd /tmp/entware
-          make -j"$(nproc)" toolchain/install
+          make -j"$(nproc)" toolchain/install FORCE=1
 
       - name: Build kvas Package
         run: |
           set -euo pipefail
           cd /tmp/entware
-          make -j"$(nproc)" package/kvas/compile
+          make -j"$(nproc)" package/kvas/compile FORCE=1
 
       - name: Collect IPK Artifacts
         run: |
