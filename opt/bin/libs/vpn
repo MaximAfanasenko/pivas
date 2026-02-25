@@ -1580,6 +1580,189 @@ cmd_vpn_status() {
         ready "Текущее VPN соединение: ${BLUE}${inface}${NOCL}"
         [ "$(is_vpn_interface_connected "${vpn_cli}")" = 'on' ] && when_ok "ПОДКЛЮЧЕНО" || when_bad "ОТКЛЮЧЕНО"
 }
+
+cmd_ovpn_split_status() {
+	local enabled
+	enabled=$(get_config_value OVPN_ENABLE)
+	local inface_cli
+	inface_cli=$(get_config_value OVPN_INFACE_CLI)
+	local inface_ent
+	inface_ent=$(get_config_value OVPN_INFACE_ENT)
+	local list_file="${KVAS_OVPN_LIST_FILE}"
+
+	ready "Параллельный OVPN режим"
+	if is_ovpn_split_enabled ; then
+		when_ok "ВКЛЮЧЕН"
+	else
+		when_bad "ВЫКЛЮЧЕН"
+	fi
+
+	ready "OVPN интерфейс"
+	if [ -n "${inface_cli}" ] && [ -n "${inface_ent}" ]; then
+		local state='off'
+		is_interface_online "${inface_cli}" && state='on'
+		if [ "${state}" = 'on' ]; then
+			when_ok "${inface_cli} (${inface_ent})"
+		else
+			when_bad "${inface_cli} (${inface_ent})"
+		fi
+	else
+		when_alert "НЕ ЗАДАН"
+	fi
+
+	ready "Список для OVPN"
+	if [ -f "${list_file}" ]; then
+		local count
+		count=$(grep -Evc '^[[:space:]]*(#|$)' "${list_file}")
+		when_alert "${list_file} (${count} записей)"
+	else
+		when_bad "${list_file} отсутствует"
+	fi
+
+	ready "Флаг OVPN_ENABLE"
+	when_alert "${enabled:-0}"
+}
+
+cmd_ovpn_split_on() {
+	local inface_cli="${1}"
+	if [ -n "${inface_cli}" ]; then
+		local inface_ent
+		inface_ent=$(curl -s "${INFACE_REQUEST}" | jq -r '.[] | select(.id=="'"${inface_cli}"'") | ."interface-name"')
+		local inface_type
+		inface_type=$(curl -s "${INFACE_REQUEST}" | jq -r '.[] | select(.id=="'"${inface_cli}"'") | .type')
+
+		if [ -z "${inface_ent}" ]; then
+			error "Интерфейс ${inface_cli} не найден."
+			return 1
+		fi
+		if [ "${inface_type}" != 'OpenVPN' ]; then
+			error "Интерфейс ${inface_cli} имеет тип ${inface_type}, требуется OpenVPN."
+			return 1
+		fi
+
+		set_config_value OVPN_INFACE_CLI "${inface_cli}"
+		set_config_value OVPN_INFACE_ENT "${inface_ent}"
+	fi
+
+	if [ -z "$(get_config_value OVPN_INFACE_CLI)" ] || [ -z "$(get_config_value OVPN_INFACE_ENT)" ]; then
+		error "Сначала задайте OpenVPN интерфейс: kvas ovpn on <OpenVPNX>"
+		return 1
+	fi
+
+	set_config_value OVPN_ENABLE 1
+	local ovpn_cli
+	ovpn_cli=$(get_config_value OVPN_INFACE_CLI)
+	if [ "$(get_value_interface_field "${ovpn_cli}" state)" = 'down' ]; then
+		curl -s -d '{"up":"true"}' "${INFACE_PART_REQUEST}/${ovpn_cli}" &> /dev/null
+		sleep 2
+	fi
+	update_iptables
+	update_ipset refresh
+	ready "Параллельный OVPN режим"
+	when_ok "ВКЛЮЧЕН"
+}
+
+cmd_ovpn_split_off() {
+	set_config_value OVPN_ENABLE 0
+	update_iptables
+	ready "Параллельный OVPN режим"
+	when_ok "ОТКЛЮЧЕН"
+}
+
+cmd_ovpn_list_show() {
+	local list_file="${KVAS_OVPN_LIST_FILE}"
+	if ! [ -f "${list_file}" ]; then
+		touch "${list_file}"
+	fi
+
+	local count
+	count=$(grep -Evc '^[[:space:]]*(#|$)' "${list_file}")
+	warning "OVPN список содержит ${YELLOW}${count}${GREEN} записей:"
+	print_line
+	grep -Ev '^[[:space:]]*(#|$)' "${list_file}" || true
+}
+
+cmd_ovpn_list_add() {
+	local host_raw="${1}"
+	if [ -z "${host_raw}" ]; then
+		error "Не задан домен/IP. Используйте: kvas ovpn add <domain|ip|cidr>"
+		return 1
+	fi
+
+	local regexp_ip_or_range
+	regexp_ip_or_range=$(get_regexp_ip_or_range)
+
+	local host
+	if echo "${host_raw}" | grep -qE -- "${regexp_ip_or_range}" ; then
+		host="${host_raw}"
+	else
+		host=$(echo "${host_raw}" | sed 's/\*//;' | sed -n -E 's|^(https?://)?([^/]+).*|\2|p')
+	fi
+	host=$(echo "${host}" | tr -d ' ')
+
+	if [ -z "${host}" ]; then
+		error "Некорректно указано имя домена/IP: ${host_raw}"
+		return 1
+	fi
+
+	if ! echo "${host}" | grep -qE -- "${regexp_ip_or_range}" && ! echo "${host}" | grep -q '\.' ; then
+		error "Некорректно указано имя домена/IP: ${host_raw}"
+		return 1
+	fi
+
+	local clear_host="${host//\*/}"
+	local escaped_clear
+	escaped_clear=$(escape_sed "${clear_host}")
+	local list_file="${KVAS_OVPN_LIST_FILE}"
+	[ -f "${list_file}" ] || touch "${list_file}"
+
+	if grep -qE "^\\*?${escaped_clear}$" "${list_file}" ; then
+		warning "Такая запись уже есть в OVPN списке."
+		return 0
+	fi
+
+	ready "Добавляем ${YELLOW}${host}${NOCL} в OVPN список..."
+	echo "${host}" >> "${list_file}"
+	[ $? = 0 ] && when_ok "ДОБАВЛЕН" || {
+		when_bad "НЕ ДОБАВЛЕН"
+		return 1
+	}
+
+	update_ipset refresh
+}
+
+cmd_ovpn_list_del() {
+	local host_raw="${1}"
+	if [ -z "${host_raw}" ]; then
+		error "Не задан домен/IP. Используйте: kvas ovpn del <domain|ip|cidr>"
+		return 1
+	fi
+
+	local host
+	host=$(echo "${host_raw}" | sed -n -E 's|^(https?://)?([^/]+).*|\2|p')
+	[ -n "${host}" ] || host="${host_raw}"
+	host=$(echo "${host}" | tr -d ' ')
+
+	local clear_host="${host//\*/}"
+	local escaped_clear
+	escaped_clear=$(escape_sed "${clear_host}")
+	local list_file="${KVAS_OVPN_LIST_FILE}"
+	[ -f "${list_file}" ] || touch "${list_file}"
+
+	if ! grep -qE "^\\*?${escaped_clear}$" "${list_file}" ; then
+		error "Такая запись отсутствует в OVPN списке."
+		return 1
+	fi
+
+	ready "Удаляем ${YELLOW}${clear_host}${NOCL} из OVPN списка..."
+	sed -i "/^\\*\\{0,1\\}${escaped_clear}\$/d" "${list_file}"
+	[ $? = 0 ] && when_ok "УДАЛЕН" || {
+		when_bad "НЕ УДАЛЕН"
+		return 1
+	}
+
+	update_ipset refresh
+}
 # ------------------------------------------------------------------------------------------
 #
 #	Производим замену в библиотеке ndm основных значения интерфейсов

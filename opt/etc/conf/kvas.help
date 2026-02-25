@@ -69,6 +69,15 @@ vpn gateway <IP>        - подключение через VPN-соединен
                           В этом случае, VPN-соединение устанавливается не на роутере, 
                           а на отдельном устройстве в сети. IP - это адрес устройства.
 
+ovpn status             - статус параллельного режима OpenVPN + Shadowsocks.
+ovpn on <OpenVPNX>      - включаем параллельный режим:
+                          трафик из /opt/etc/kvas.list идет через Shadowsocks,
+                          трафик из /opt/etc/kvas.ovpn.list идет через OpenVPNX.
+ovpn off                - выключаем параллельный режим и оставляем только основной тоннель.
+ovpn add <домен|IP>     - добавить запись в /opt/etc/kvas.ovpn.list.
+ovpn del <домен|IP>     - удалить запись из /opt/etc/kvas.ovpn.list.
+ovpn list|show          - показать список /opt/etc/kvas.ovpn.list.
+
 dns                     - отображаем текущий DNS (по умолчанию) для работы пакета.
 dns test <домен>        - тестируем работу DNS (по умолчанию google.com) в пакете.
 dns test <домен> -fast  - тестируем работу DNS, без ожидания реакции от пользователя.
