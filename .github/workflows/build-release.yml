@@ -13,6 +13,8 @@ jobs:
   build-and-release:
     runs-on: ubuntu-22.04
     timeout-minutes: 240
+    env:
+      FORCE: "1"
 
     steps:
       - name: Checkout Repository
@@ -87,18 +89,18 @@ jobs:
           CONFIG_FILE="$(ls configs/aarch64-*.config | head -n 1)"
           cp -f "${CONFIG_FILE}" .config
           grep -q '^CONFIG_PACKAGE_kvas=m$' .config || echo 'CONFIG_PACKAGE_kvas=m' >> .config
-          make defconfig FORCE=1
+          make defconfig
 
       - name: Build Toolchain
         run: |
           cd /tmp/entware
-          make -j"$(nproc)" toolchain/install FORCE=1
+          make -j"$(nproc)" toolchain/install
 
       - name: Build kvas Package
         run: |
           set -euo pipefail
           cd /tmp/entware
-          make -j"$(nproc)" package/kvas/compile FORCE=1
+          make -j"$(nproc)" package/kvas/compile
 
       - name: Collect IPK Artifacts
         run: |
