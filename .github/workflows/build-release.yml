@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 240
     env:
       FORCE: "1"
+      CCACHE_DIR: /tmp/entware/.ccache
 
     steps:
       - name: Checkout Repository
@@ -93,6 +94,27 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/Entware/Entware.git /tmp/entware
 
+      - name: Resolve Entware Revision
+        id: entware
+        run: |
+          set -euo pipefail
+          COMMIT="$(git -C /tmp/entware rev-parse --short=12 HEAD)"
+          echo "commit=${COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Entware Caches
+        id: cache-entware
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/entware/dl
+            /tmp/entware/.ccache
+            /tmp/entware/staging_dir/toolchain-*
+            /tmp/entware/build_dir/toolchain-*
+          key: ${{ runner.os }}-entware-aarch64-${{ steps.entware.outputs.commit }}-v1
+          restore-keys: |
+            ${{ runner.os }}-entware-aarch64-${{ steps.entware.outputs.commit }}-
+            ${{ runner.os }}-entware-aarch64-
+
       - name: Add Package To Entware Feeds
         run: |
           set -euo pipefail
@@ -110,6 +132,7 @@ jobs:
           CONFIG_FILE="$(ls configs/aarch64-*.config | head -n 1)"
           cp -f "${CONFIG_FILE}" .config
           grep -q '^CONFIG_PACKAGE_kvas=m$' .config || echo 'CONFIG_PACKAGE_kvas=m' >> .config
+          grep -q '^CONFIG_CCACHE=y$' .config || echo 'CONFIG_CCACHE=y' >> .config
           make defconfig
 
       - name: Build Toolchain
@@ -117,11 +140,25 @@ jobs:
           cd /tmp/entware
           make -j"$(nproc)" toolchain/install
 
+      - name: Save Entware Caches
+        if: always() && steps.cache-entware.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/entware/dl
+            /tmp/entware/.ccache
+            /tmp/entware/staging_dir/toolchain-*
+            /tmp/entware/build_dir/toolchain-*
+          key: ${{ runner.os }}-entware-aarch64-${{ steps.entware.outputs.commit }}-v1
+
       - name: Build kvas Package
         run: |
           set -euo pipefail
           cd /tmp/entware
-          make -j"$(nproc)" package/kvas/compile
+          if ! make -j"$(nproc)" package/kvas/compile; then
+            echo "Parallel build failed, rerunning with verbose logs..."
+            make -j1 V=sc package/kvas/compile
+          fi
 
       - name: Collect IPK Artifacts
         run: |
@@ -130,12 +167,29 @@ jobs:
           find /tmp/entware/bin -type f -name "kvas*.ipk" -print -exec cp -f {} /tmp/artifacts/ \;
           ls -la /tmp/artifacts
 
+      - name: Collect Build Logs
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/build-logs
+          find /tmp/entware/logs -type f -name "*kvas*" -print -exec cp -f {} /tmp/build-logs/ \; || true
+          find /tmp/entware/build_dir -type f \( -name "config.log" -o -name "*.log" \) | grep -i kvas | head -n 50 | while read -r f; do cp -f "$f" /tmp/build-logs/; done || true
+          ls -la /tmp/build-logs || true
+
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kvas-ipk
           path: /tmp/artifacts/*.ipk
           if-no-files-found: error
+
+      - name: Upload Build Logs Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: /tmp/build-logs/*
+          if-no-files-found: warn
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
