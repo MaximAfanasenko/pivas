@@ -20,6 +20,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Setup Python 2.7
+        uses: actions/setup-python@v5
+        with:
+          python-version: "2.7"
+
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
@@ -49,6 +54,16 @@ jobs:
             unzip \
             wget \
             zstd
+
+      - name: Ensure python2 aliases exist
+        run: |
+          set -euo pipefail
+          PY27_BIN="$(command -v python)"
+          sudo ln -sf "${PY27_BIN}" /usr/local/bin/python2
+          sudo ln -sf "${PY27_BIN}" /usr/local/bin/python2.7
+          python --version
+          python2 --version
+          python2.7 --version
 
       - name: Prepare Build Variables
         id: vars
